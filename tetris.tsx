@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { motion, AnimatePresence } from "framer-motion"
-import { Music, Pause, Play, VolumeX } from "lucide-react"
+import { Maximize2, Music, Pause, Play, VolumeX } from "lucide-react"
 import { Geist } from "next/font/google"
 import Image from "next/image"
 
@@ -90,6 +90,9 @@ export default function Tetris() {
   const [level, setLevel] = useState(1)
   const [isMusicPlaying, setIsMusicPlaying] = useState(true)
   const [completedRows, setCompletedRows] = useState([])
+  const [isEmbedded, setIsEmbedded] = useState(false)
+  const [isDocumentFullscreen, setIsDocumentFullscreen] = useState(false)
+  const [isFrameFullscreen, setIsFrameFullscreen] = useState(false)
   const audioRef = useRef(null)
   const gameStateRef = useRef({
     board,
@@ -101,6 +104,68 @@ export default function Tetris() {
   useEffect(() => {
     gameStateRef.current = { board, currentPiece, gameOver, isPaused }
   }, [board, currentPiece, gameOver, isPaused])
+
+  useEffect(() => {
+    const inIframe = (() => {
+      try {
+        return window.self !== window.top
+      } catch {
+        return true
+      }
+    })()
+
+    setIsEmbedded(inIframe)
+
+    const updateFrameFullscreen = () => {
+      const sw = window.screen?.width ?? 0
+      const sh = window.screen?.height ?? 0
+      if (!sw || !sh) {
+        setIsFrameFullscreen(false)
+        return
+      }
+      const wDiff = Math.abs(window.innerWidth - sw)
+      const hDiff = Math.abs(window.innerHeight - sh)
+      setIsFrameFullscreen(wDiff <= 24 && hDiff <= 160)
+    }
+
+    const updateDocumentFullscreen = () => {
+      const docAny = document as any
+      const fullscreenElement =
+        document.fullscreenElement ||
+        docAny.webkitFullscreenElement ||
+        docAny.mozFullScreenElement ||
+        docAny.msFullscreenElement ||
+        null
+      setIsDocumentFullscreen(Boolean(fullscreenElement))
+    }
+
+    const onMessage = (event: MessageEvent) => {
+      const data: any = (event as any).data
+      if (data && data.type === "gamehub:bridge:fullscreen") {
+        setIsFrameFullscreen(Boolean(data.isFullscreen))
+      }
+    }
+
+    if (inIframe) {
+      updateFrameFullscreen()
+      updateDocumentFullscreen()
+      window.addEventListener("resize", updateFrameFullscreen)
+      window.addEventListener("message", onMessage)
+      document.addEventListener("fullscreenchange", updateDocumentFullscreen)
+      document.addEventListener("webkitfullscreenchange", updateDocumentFullscreen as any)
+      document.addEventListener("mozfullscreenchange", updateDocumentFullscreen as any)
+      document.addEventListener("MSFullscreenChange", updateDocumentFullscreen as any)
+    }
+
+    return () => {
+      window.removeEventListener("resize", updateFrameFullscreen)
+      window.removeEventListener("message", onMessage)
+      document.removeEventListener("fullscreenchange", updateDocumentFullscreen)
+      document.removeEventListener("webkitfullscreenchange", updateDocumentFullscreen as any)
+      document.removeEventListener("mozfullscreenchange", updateDocumentFullscreen as any)
+      document.removeEventListener("MSFullscreenChange", updateDocumentFullscreen as any)
+    }
+  }, [])
 
   const checkCollision = useCallback(
     (x, y, shape, currentBoard = board) => {
@@ -487,8 +552,69 @@ export default function Tetris() {
     setIsMusicPlaying(!isMusicPlaying)
   }
 
+  const requestFullscreen = useCallback(async () => {
+    const elem: any = document.documentElement
+    try {
+      if (elem.requestFullscreen) {
+        await elem.requestFullscreen()
+      } else if (elem.webkitRequestFullscreen) {
+        await elem.webkitRequestFullscreen()
+      } else if (elem.mozRequestFullScreen) {
+        await elem.mozRequestFullScreen()
+      } else if (elem.msRequestFullscreen) {
+        await elem.msRequestFullscreen()
+      }
+    } catch (e) {
+      try {
+        const msg = {
+          type: "gamehub:bridge:event",
+          name: "request_fullscreen",
+          payload: { from: "tetris-game" },
+        }
+
+        const parentWindow: any = window.parent
+        if (parentWindow && parentWindow !== window) {
+          try {
+            parentWindow.postMessage(msg, { targetOrigin: "*", includeUserActivation: true })
+          } catch {
+            parentWindow.postMessage(msg, "*")
+          }
+        }
+      } catch {}
+    }
+  }, [])
+
   return (
     <div className={`flex flex-col items-center justify-center min-h-screen p-4 bg-gray-200 ${geist.className}`}>
+      <AnimatePresence>
+        {isEmbedded && !isDocumentFullscreen && !isFrameFullscreen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 16, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 16, scale: 0.98 }}
+              transition={{ type: "spring", stiffness: 260, damping: 26 }}
+              className="w-full max-w-sm rounded-2xl border border-white/10 bg-gray-900/90 p-6 text-white shadow-2xl backdrop-blur"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="text-lg font-semibold">For better experience</div>
+              <div className="mt-1 text-sm text-white/70">Play in fullscreen.</div>
+              <div className="mt-5 flex justify-end">
+                <Button onClick={requestFullscreen} className="bg-indigo-600 hover:bg-indigo-500">
+                  <Maximize2 className="mr-2 h-4 w-4" />
+                  Fullscreen
+                </Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div className="mb-8">
         <Image src="/tetris-logo.png" alt="Tetris Logo" width={300} height={80} priority className="drop-shadow-lg" />
       </div>
@@ -606,6 +732,17 @@ export default function Tetris() {
           <Button onClick={toggleMusic} size="sm" className="bg-gray-800 hover:bg-gray-700">
             {isMusicPlaying ? <Music className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
           </Button>
+          {isEmbedded && !isDocumentFullscreen && !isFrameFullscreen && (
+            <Button
+              onClick={requestFullscreen}
+              size="sm"
+              className="bg-gray-800 hover:bg-gray-700"
+              aria-label="Fullscreen"
+              title="Fullscreen"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </Button>
+          )}
           <Button onClick={resetGame} size="sm" className="bg-gray-800 hover:bg-gray-700">
             {gameOver ? "Play Again" : "Reset"}
           </Button>
