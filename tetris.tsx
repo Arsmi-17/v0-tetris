@@ -9,6 +9,39 @@ import Image from "next/image"
 
 const geist = Geist({ subsets: ["latin"] })
 
+declare global {
+  interface Window {
+    GameHubSDK?: {
+      create: (options?: Record<string, unknown>) => {
+        pocket?: {
+          ready?: (payload: Record<string, unknown>) => void
+          onInput?: (handler: (payload: any) => void) => () => void
+          onPlayerJoined?: (handler: (payload: any) => void) => () => void
+          onPlayerReconnected?: (handler: (payload: any) => void) => () => void
+          onPlayerLeft?: (handler: (payload: any) => void) => () => void
+        }
+        on?: (type: string, handler: (payload: any) => void) => () => void
+        log?: (level: string, message: string, data?: unknown) => void
+        requestPlatformFullscreen?: (orientation?: string) => void
+        destroy?: () => void
+      }
+    }
+    GameHubBridge?: {
+      pocket?: {
+        ready?: (payload: Record<string, unknown>) => void
+        onInput?: (handler: (payload: any) => void) => () => void
+        onPlayerJoined?: (handler: (payload: any) => void) => () => void
+        onPlayerReconnected?: (handler: (payload: any) => void) => () => void
+        onPlayerLeft?: (handler: (payload: any) => void) => () => void
+      }
+      on?: (type: string, handler: (payload: any) => void) => () => void
+      log?: (level: string, message: string, data?: unknown) => void
+      requestPlatformFullscreen?: (orientation?: string) => void
+      destroy?: () => void
+    }
+  }
+}
+
 const TETROMINOS = {
   I: { shape: [[1, 1, 1, 1]], color: "cyan-500" },
   J: {
@@ -93,17 +126,31 @@ export default function Tetris() {
   const [isEmbedded, setIsEmbedded] = useState(false)
   const [isDocumentFullscreen, setIsDocumentFullscreen] = useState(false)
   const [isFrameFullscreen, setIsFrameFullscreen] = useState(false)
+  const [activePocketPlayer, setActivePocketPlayer] = useState<number | null>(null)
   const audioRef = useRef(null)
+  const activePocketPlayerRef = useRef<number | null>(null)
+  const controlsRef = useRef({
+    moveLeft: () => {},
+    moveRight: () => {},
+    moveDown: () => {},
+    rotate: () => {},
+  })
+  const isFullscreenActive = !isEmbedded || isDocumentFullscreen || isFrameFullscreen
   const gameStateRef = useRef({
     board,
     currentPiece,
     gameOver,
     isPaused,
+    isFullscreenActive,
   })
 
   useEffect(() => {
-    gameStateRef.current = { board, currentPiece, gameOver, isPaused }
-  }, [board, currentPiece, gameOver, isPaused])
+    gameStateRef.current = { board, currentPiece, gameOver, isPaused, isFullscreenActive }
+  }, [board, currentPiece, gameOver, isPaused, isFullscreenActive])
+
+  useEffect(() => {
+    activePocketPlayerRef.current = activePocketPlayer
+  }, [activePocketPlayer])
 
   useEffect(() => {
     const inIframe = (() => {
@@ -143,6 +190,15 @@ export default function Tetris() {
       const data: any = (event as any).data
       if (data && data.type === "gamehub:bridge:fullscreen") {
         setIsFrameFullscreen(Boolean(data.isFullscreen))
+      }
+      if (data && data.type === "gamehub:bridge:event") {
+        const eventName = String(data.event || data.name || "")
+        if (eventName === "set_fullscreen") {
+          setIsFrameFullscreen(Boolean(data.payload?.fullscreen))
+        }
+        if (eventName === "set_mute") {
+          setIsMusicPlaying(!Boolean(data.payload?.muted))
+        }
       }
     }
 
@@ -211,7 +267,7 @@ export default function Tetris() {
   }, [])
 
   const holdPiece = useCallback(() => {
-    if (!canHold || !currentPiece) return
+    if (!isFullscreenActive || !canHold || !currentPiece) return
 
     if (heldPiece) {
       const newPiece = {
@@ -232,31 +288,31 @@ export default function Tetris() {
       spawnNewPiece()
     }
     setCanHold(false)
-  }, [currentPiece, heldPiece, canHold, isValidMove])
+  }, [currentPiece, heldPiece, canHold, isValidMove, isFullscreenActive])
 
   const moveLeft = useCallback(() => {
-    if (currentPiece && !isPaused && isValidMove(currentPiece.x - 1, currentPiece.y, currentPiece.tetromino.shape)) {
+    if (isFullscreenActive && currentPiece && !isPaused && isValidMove(currentPiece.x - 1, currentPiece.y, currentPiece.tetromino.shape)) {
       setCurrentPiece((prev) => ({ ...prev, x: prev.x - 1 }))
     }
-  }, [currentPiece, isPaused, isValidMove])
+  }, [currentPiece, isPaused, isValidMove, isFullscreenActive])
 
   const moveRight = useCallback(() => {
-    if (currentPiece && !isPaused && isValidMove(currentPiece.x + 1, currentPiece.y, currentPiece.tetromino.shape)) {
+    if (isFullscreenActive && currentPiece && !isPaused && isValidMove(currentPiece.x + 1, currentPiece.y, currentPiece.tetromino.shape)) {
       setCurrentPiece((prev) => ({ ...prev, x: prev.x + 1 }))
     }
-  }, [currentPiece, isPaused, isValidMove])
+  }, [currentPiece, isPaused, isValidMove, isFullscreenActive])
 
   const moveDown = useCallback(() => {
-    if (!currentPiece || isPaused) return
+    if (!isFullscreenActive || !currentPiece || isPaused) return
     if (isValidMove(currentPiece.x, currentPiece.y + 1, currentPiece.tetromino.shape)) {
       setCurrentPiece((prev) => ({ ...prev, y: prev.y + 1 }))
     } else {
       placePiece()
     }
-  }, [currentPiece, isPaused, isValidMove])
+  }, [currentPiece, isPaused, isValidMove, isFullscreenActive])
 
   const rotate = useCallback(() => {
-    if (!currentPiece || isPaused) return
+    if (!isFullscreenActive || !currentPiece || isPaused) return
     const rotated = currentPiece.tetromino.shape[0].map((_, i) =>
       currentPiece.tetromino.shape.map((row) => row[i]).reverse(),
     )
@@ -286,10 +342,10 @@ export default function Tetris() {
         return
       }
     }
-  }, [currentPiece, isPaused, isValidMove])
+  }, [currentPiece, isPaused, isValidMove, isFullscreenActive])
 
   const hardDrop = useCallback(() => {
-    if (!currentPiece || isPaused) return
+    if (!isFullscreenActive || !currentPiece || isPaused) return
 
     let dropY = currentPiece.y
     while (isValidMove(currentPiece.x, dropY + 1, currentPiece.tetromino.shape)) {
@@ -300,7 +356,7 @@ export default function Tetris() {
       const droppedPiece = { ...currentPiece, y: dropY }
       placePieceAtPosition(droppedPiece)
     }
-  }, [currentPiece, isPaused, isValidMove])
+  }, [currentPiece, isPaused, isValidMove, isFullscreenActive])
 
   const placePieceAtPosition = useCallback(
     (piece) => {
@@ -414,24 +470,25 @@ export default function Tetris() {
   }
 
   useEffect(() => {
-    if (!currentPiece && !gameOver) {
+    if (isFullscreenActive && !currentPiece && !gameOver) {
       spawnNewPiece()
     }
-  }, [currentPiece, gameOver, spawnNewPiece])
+  }, [currentPiece, gameOver, spawnNewPiece, isFullscreenActive])
 
   useEffect(() => {
     let interval = null
 
-    if (!gameOver && !isPaused) {
+    if (isFullscreenActive && !gameOver && !isPaused) {
       interval = setInterval(() => {
         const {
           currentPiece: piece,
           board: currentBoard,
           gameOver: isGameOver,
           isPaused: paused,
+          isFullscreenActive: fullscreenActive,
         } = gameStateRef.current
 
-        if (isGameOver || paused || !piece) return
+        if (!fullscreenActive || isGameOver || paused || !piece) return
 
         const canMoveDown = !checkCollision(piece.x, piece.y + 1, piece.tetromino.shape, currentBoard)
 
@@ -448,11 +505,11 @@ export default function Tetris() {
         clearInterval(interval)
       }
     }
-  }, [gameOver, isPaused, dropTime, checkCollision, placePieceAtPosition])
+  }, [gameOver, isPaused, dropTime, checkCollision, placePieceAtPosition, isFullscreenActive])
 
   useEffect(() => {
     const handleKeyPress = (e) => {
-      if (gameOver) return
+      if (gameOver || !isFullscreenActive) return
       switch (e.key) {
         case "ArrowLeft":
           moveLeft()
@@ -484,19 +541,102 @@ export default function Tetris() {
     }
     window.addEventListener("keydown", handleKeyPress)
     return () => window.removeEventListener("keydown", handleKeyPress)
-  }, [moveLeft, moveRight, moveDown, rotate, gameOver, holdPiece])
+  }, [moveLeft, moveRight, moveDown, rotate, gameOver, holdPiece, isFullscreenActive])
 
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.volume = 0.3
       audioRef.current.loop = true
-      if (!gameOver && isMusicPlaying && !isPaused) {
+      if (isFullscreenActive && !gameOver && isMusicPlaying && !isPaused) {
         audioRef.current.play().catch((error) => console.error("Audio playback failed:", error))
       } else {
         audioRef.current.pause()
       }
     }
-  }, [gameOver, isMusicPlaying, isPaused])
+  }, [gameOver, isMusicPlaying, isPaused, isFullscreenActive])
+
+  useEffect(() => {
+    controlsRef.current = { moveLeft, moveRight, moveDown, rotate }
+  }, [moveLeft, moveRight, moveDown, rotate])
+
+  useEffect(() => {
+    const sdk =
+      window.GameHubSDK?.create?.({
+        capabilities: { pocketConsole: true, fullscreen: true, mute: true },
+      }) ?? window.GameHubBridge
+
+    if (!sdk) return
+
+    const cleanups: Array<() => void> = []
+
+    const bind = (cleanup?: () => void) => {
+      if (typeof cleanup === "function") cleanups.push(cleanup)
+    }
+
+    const handlePlayer = (payload: any) => {
+      const playerSlot = Number(payload?.playerSlot || 0)
+      if (!playerSlot) return
+      setActivePocketPlayer((current) => current ?? playerSlot)
+    }
+
+    const handlePlayerLeft = (payload: any) => {
+      const playerSlot = Number(payload?.playerSlot || 0)
+      if (!playerSlot) return
+      setActivePocketPlayer((current) => (current === playerSlot ? null : current))
+    }
+
+    const handlePocketInput = (payload: any) => {
+      const playerSlot = Number(payload?.playerSlot || 0)
+      const activePlayer = activePocketPlayerRef.current
+      if (activePlayer && playerSlot && playerSlot !== activePlayer) return
+      if (!gameStateRef.current.isFullscreenActive || gameStateRef.current.gameOver) return
+
+      const input = payload?.input || {}
+      if (input.pressed === false) return
+
+      switch (String(input.control || "").toLowerCase()) {
+        case "left":
+          controlsRef.current.moveLeft()
+          break
+        case "right":
+          controlsRef.current.moveRight()
+          break
+        case "down":
+          controlsRef.current.moveDown()
+          break
+        case "up":
+          controlsRef.current.rotate()
+          break
+        default:
+          break
+      }
+    }
+
+    bind(sdk.on?.("set_mute", (payload: any) => setIsMusicPlaying(!Boolean(payload?.muted))))
+    bind(
+      sdk.on?.("set_fullscreen", (payload: any) => {
+        const fullscreen = Boolean(payload?.fullscreen)
+        setIsFrameFullscreen(fullscreen)
+        if (fullscreen) setIsPaused(false)
+      }),
+    )
+    bind(sdk.pocket?.onPlayerJoined?.(handlePlayer))
+    bind(sdk.pocket?.onPlayerReconnected?.(handlePlayer))
+    bind(sdk.pocket?.onPlayerLeft?.(handlePlayerLeft))
+    bind(sdk.pocket?.onInput?.(handlePocketInput))
+
+    sdk.pocket?.ready?.({
+      maxPlayers: 1,
+      controllerSchema: "dpad",
+      controls: ["left", "right", "up", "down"],
+    })
+    sdk.log?.("info", "Tetris pocket console ready", { maxPlayers: 1 })
+
+    return () => {
+      cleanups.forEach((cleanup) => cleanup())
+      sdk.destroy?.()
+    }
+  }, [])
 
   const resetGame = () => {
     setBoard(createEmptyBoard())
@@ -553,6 +693,11 @@ export default function Tetris() {
   }
 
   const requestFullscreen = useCallback(async () => {
+    if (isEmbedded) {
+      window.GameHubBridge?.requestPlatformFullscreen?.("landscape")
+      return
+    }
+
     const elem: any = document.documentElement
     try {
       if (elem.requestFullscreen) {
@@ -582,7 +727,7 @@ export default function Tetris() {
         }
       } catch {}
     }
-  }, [])
+  }, [isEmbedded])
 
   return (
     <div className={`flex flex-col items-center justify-center min-h-screen p-4 bg-gray-200 ${geist.className}`}>
