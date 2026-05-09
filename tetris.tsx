@@ -126,6 +126,7 @@ export default function Tetris() {
   const [isEmbedded, setIsEmbedded] = useState(false)
   const [isDocumentFullscreen, setIsDocumentFullscreen] = useState(false)
   const [isFrameFullscreen, setIsFrameFullscreen] = useState(false)
+  const [isBridgeFullscreen, setIsBridgeFullscreen] = useState(false)
   const [activePocketPlayer, setActivePocketPlayer] = useState<number | null>(null)
   const audioRef = useRef(null)
   const activePocketPlayerRef = useRef<number | null>(null)
@@ -135,7 +136,7 @@ export default function Tetris() {
     moveDown: () => {},
     rotate: () => {},
   })
-  const isFullscreenActive = !isEmbedded || isDocumentFullscreen || isFrameFullscreen
+  const isFullscreenActive = !isEmbedded || isDocumentFullscreen || isFrameFullscreen || isBridgeFullscreen
   const gameStateRef = useRef({
     board,
     currentPiece,
@@ -194,7 +195,7 @@ export default function Tetris() {
       if (data && data.type === "gamehub:bridge:event") {
         const eventName = String(data.event || data.name || "")
         if (eventName === "set_fullscreen") {
-          setIsFrameFullscreen(Boolean(data.payload?.fullscreen))
+          setIsBridgeFullscreen(Boolean(data.payload?.fullscreen))
         }
         if (eventName === "set_mute") {
           setIsMusicPlaying(!Boolean(data.payload?.muted))
@@ -616,7 +617,7 @@ export default function Tetris() {
     bind(
       sdk.on?.("set_fullscreen", (payload: any) => {
         const fullscreen = Boolean(payload?.fullscreen)
-        setIsFrameFullscreen(fullscreen)
+        setIsBridgeFullscreen(fullscreen)
         if (fullscreen) setIsPaused(false)
       }),
     )
@@ -732,7 +733,7 @@ export default function Tetris() {
   return (
     <div className={`flex flex-col items-center justify-center min-h-screen p-4 bg-gray-200 ${geist.className}`}>
       <AnimatePresence>
-        {isEmbedded && !isDocumentFullscreen && !isFrameFullscreen && (
+        {isEmbedded && !isFullscreenActive && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -877,7 +878,7 @@ export default function Tetris() {
           <Button onClick={toggleMusic} size="sm" className="bg-gray-800 hover:bg-gray-700">
             {isMusicPlaying ? <Music className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
           </Button>
-          {isEmbedded && !isDocumentFullscreen && !isFrameFullscreen && (
+          {isEmbedded && !isFullscreenActive && (
             <Button
               onClick={requestFullscreen}
               size="sm"
